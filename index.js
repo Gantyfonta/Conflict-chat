@@ -26,16 +26,29 @@ import {
 
 // =================================================================================
 // Firebase Configuration
+// IMPORTANT: You must replace this with your own Firebase project configuration.
+// The authentication errors you are seeing (400 Bad Request) are because this 
+// configuration is invalid or misconfigured for your environment.
+//
+// To fix this:
+// 1. Go to the Firebase Console (https://console.firebase.google.com/).
+// 2. Select your project.
+// 3. Click the gear icon -> Project settings.
+// 4. In the "Your apps" card, find your web app.
+// 5. Under "Firebase SDK snippet", select the "Config" option.
+// 6. Copy the entire firebaseConfig object and paste it here.
+// 7. Make sure you have enabled "Email/Password" and "Google" as sign-in providers
+//    in the Firebase Console -> Authentication -> Sign-in method tab.
 // =================================================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyDXUJ2ooY5S_pR2liDGe-afRZhNo0RI8Zs",
-  authDomain: "latinfroggame.firebaseapp.com",
-  databaseURL: "https://latinfroggame-default-rtdb.firebaseio.com",
-  projectId: "latinfroggame",
-  storageBucket: "latinfroggame.firebasestorage.app",
-  messagingSenderId: "196302891263",
-  appId: "1:196302891263:web:0b2fd634738f890580c4ca",
-  measurementId: "G-S5H91BQYMB"
+  apiKey: "PASTE_YOUR_API_KEY_HERE",
+  authDomain: "PASTE_YOUR_AUTH_DOMAIN_HERE",
+  databaseURL: "PASTE_YOUR_DATABASE_URL_HERE",
+  projectId: "PASTE_YOUR_PROJECT_ID_HERE",
+  storageBucket: "PASTE_YOUR_STORAGE_BUCKET_HERE",
+  messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID_HERE",
+  appId: "PASTE_YOUR_APP_ID_HERE",
+  measurementId: "PASTE_YOUR_MEASUREMENT_ID_HERE"
 };
 
 
