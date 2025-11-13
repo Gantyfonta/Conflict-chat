@@ -1,6 +1,7 @@
 
 
 
+
 import { initializeApp } from 'firebase/app';
 import { 
     getAuth, 
@@ -66,10 +67,6 @@ const provider = new GoogleAuthProvider();
 // Constants
 // =================================================================================
 const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%2372767d'/%3E%3C/svg%3E";
-const MIC_ON_SVG = `<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>`;
-const MIC_OFF_SVG = `<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.08V5c0-1.657 1.343-3 3-3s3 1.343 3 3v.08m-6 0c0 1.657-1.343 3-3 3s-3-1.343-3-3v0m-1 8.917c1.333.604 2.89.917 4.5.917 1.61 0 3.167-.313 4.5-.917m-9 0v-1c0-2.21 1.79-4 4-4s4 1.79 4 4v1m-6 .08h.08a4.992 4.992 0 01-4.16 0H6"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3l18 18"></path></svg>`;
-const CAM_ON_SVG = `<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>`;
-const CAM_OFF_SVG = `<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3l18 18"></path></svg>`;
 const HANGUP_SVG = `<svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.218,2.282a1.042,1.042,0,0,0-1.474,0l-1.7,1.7-2.31-2.31a3.03,3.03,0,0,0-4.286,0L2.282,6.839a3.03,3.03,0,0,0,0,4.286l3.3,3.3-2.24,2.24a1.042,1.042,0,0,0,0,1.474l3.78,3.78a1.042,1.042,0,0,0,1.474,0l2.24-2.24,3.3,3.3a3.03,3.03,0,0,0,4.286,0l4.834-4.834a3.03,3.03,0,0,0,0-4.286L17.218,2.282Z"></path></svg>`;
 
 // =================================================================================
@@ -289,7 +286,7 @@ const showRoomUI = (state) => {
             <h3 class="text-2xl font-semibold">Waiting for someone to join...</h3>
             <p class="text-gray-300 mt-2">Share the room code with a friend.</p>
         `;
-        controls.innerHTML = `<button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Hang up">${HANGUP_SVG}</button>`;
+        controls.innerHTML = `<button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Stop Sharing">${HANGUP_SVG}</button>`;
         document.getElementById('hang-up-button').onclick = hangUp;
         
         status.style.display = 'flex';
@@ -300,12 +297,8 @@ const showRoomUI = (state) => {
         localVideoContainer.style.display = 'block';
         controls.style.display = 'flex';
         controls.innerHTML = `
-            <button id="toggle-mic-button" class="w-14 h-14 bg-gray-600/80 rounded-full flex items-center justify-center hover:bg-gray-500/80" aria-label="Mute microphone" data-muted="false">${MIC_ON_SVG}</button>
-            <button id="toggle-camera-button" class="w-14 h-14 bg-gray-600/80 rounded-full flex items-center justify-center hover:bg-gray-500/80" aria-label="Turn off camera" data-enabled="true">${CAM_ON_SVG}</button>
-            <button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Hang up">${HANGUP_SVG}</button>
+            <button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Stop Sharing">${HANGUP_SVG}</button>
         `;
-        document.getElementById('toggle-mic-button').onclick = toggleMute;
-        document.getElementById('toggle-camera-button').onclick = toggleCamera;
         document.getElementById('hang-up-button').onclick = hangUp;
     }
 };
@@ -319,11 +312,19 @@ const handleCreateRoom = async () => {
     if (activeRoomId) return;
 
     try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         document.getElementById('local-video').srcObject = localStream;
+        
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.onended = () => {
+                console.log("Screen sharing ended by user via browser UI.");
+                hangUp();
+            };
+        }
     } catch (error) {
-        console.error("Could not get media devices.", error);
-        alert("Camera and microphone access are required for video calls.");
+        console.error("Could not get display media.", error);
+        alert("Screen sharing permission is required to create a room.");
         return;
     }
 
@@ -416,11 +417,19 @@ const handleJoinRoom = async (e) => {
     activeRoomId = roomId;
 
     try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         document.getElementById('local-video').srcObject = localStream;
+        
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.onended = () => {
+                console.log("Screen sharing ended by user via browser UI.");
+                hangUp();
+            };
+        }
     } catch (error) {
-        console.error("Could not get media devices.", error);
-        alert("Camera and microphone access are required for video calls.");
+        console.error("Could not get display media.", error);
+        alert("Screen sharing permission is required to join a room.");
         activeRoomId = null;
         return;
     }
@@ -522,38 +531,6 @@ const hangUp = async () => {
     }
 
     showLobby();
-};
-
-const toggleMute = () => {
-    if (!localStream) return;
-    const audioTrack = localStream.getAudioTracks()[0];
-    const micButton = document.getElementById('toggle-mic-button');
-    if (audioTrack && micButton) {
-        audioTrack.enabled = !audioTrack.enabled;
-        const isMuted = !audioTrack.enabled;
-        micButton.dataset.muted = isMuted;
-        micButton.setAttribute('aria-label', isMuted ? 'Unmute microphone' : 'Mute microphone');
-        micButton.classList.toggle('bg-red-500', isMuted);
-        micButton.classList.toggle('hover:bg-red-600', isMuted);
-        micButton.classList.toggle('bg-gray-600/80', !isMuted);
-        micButton.innerHTML = isMuted ? MIC_OFF_SVG : MIC_ON_SVG;
-    }
-};
-
-const toggleCamera = () => {
-    if (!localStream) return;
-    const videoTrack = localStream.getVideoTracks()[0];
-    const camButton = document.getElementById('toggle-camera-button');
-    if (videoTrack && camButton) {
-        videoTrack.enabled = !videoTrack.enabled;
-        const isEnabled = videoTrack.enabled;
-        camButton.dataset.enabled = isEnabled;
-        camButton.setAttribute('aria-label', isEnabled ? 'Turn off camera' : 'Turn on camera');
-        camButton.classList.toggle('bg-red-500', !isEnabled);
-        camButton.classList.toggle('hover:bg-red-600', !isEnabled);
-        camButton.classList.toggle('bg-gray-600/80', isEnabled);
-        camButton.innerHTML = isEnabled ? CAM_ON_SVG : CAM_OFF_SVG;
-    }
 };
 
 // =================================================================================
