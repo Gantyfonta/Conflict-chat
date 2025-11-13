@@ -1,0 +1,8 @@
+{
+  "name": "Copy of Conflict Rooms",
+  "description": "A simple video chat application where users can create or join rooms using a code. Powered by Firebase and WebRTC.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
