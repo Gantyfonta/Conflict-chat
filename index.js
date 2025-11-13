@@ -1,3 +1,5 @@
+
+
 import { initializeApp } from 'firebase/app';
 import { 
     getAuth, 
@@ -27,28 +29,29 @@ import {
 // =================================================================================
 // Firebase Configuration
 // IMPORTANT: You must replace this with your own Firebase project configuration.
-// The authentication errors you are seeing (400 Bad Request) are because this 
-// configuration is invalid or misconfigured for your environment.
+// The authentication errors you are seeing are because this configuration is a
+// placeholder. The app will not work until you provide your own credentials.
 //
 // To fix this:
 // 1. Go to the Firebase Console (https://console.firebase.google.com/).
-// 2. Select your project.
-// 3. Click the gear icon -> Project settings.
-// 4. In the "Your apps" card, find your web app.
-// 5. Under "Firebase SDK snippet", select the "Config" option.
-// 6. Copy the entire firebaseConfig object and paste it here.
-// 7. Make sure you have enabled "Email/Password" and "Google" as sign-in providers
-//    in the Firebase Console -> Authentication -> Sign-in method tab.
+// 2. Create a new project or select an existing one.
+// 3. Go to Project settings (click the gear icon ⚙️).
+// 4. In the "Your apps" card, click the web icon (</>) to create a new web app or select your existing one.
+// 5. Copy the entire firebaseConfig object and paste it here.
+// 6. Go to Authentication -> Sign-in method tab.
+// 7. Enable both "Email/Password" and "Google" as sign-in providers.
+// 8. Go to Authentication -> Settings tab -> Authorized domains.
+// 9. Make sure the domain where you are running this app is listed.
 // =================================================================================
 const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY_HERE",
-  authDomain: "PASTE_YOUR_AUTH_DOMAIN_HERE",
-  databaseURL: "PASTE_YOUR_DATABASE_URL_HERE",
-  projectId: "PASTE_YOUR_PROJECT_ID_HERE",
-  storageBucket: "PASTE_YOUR_STORAGE_BUCKET_HERE",
-  messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID_HERE",
-  appId: "PASTE_YOUR_APP_ID_HERE",
-  measurementId: "PASTE_YOUR_MEASUREMENT_ID_HERE"
+  apiKey: "AIzaSyDXUJ2ooY5S_pR2liDGe-afRZhNo0RI8Zs",
+  authDomain: "latinfroggame.firebaseapp.com",
+  databaseURL: "https://latinfroggame-default-rtdb.firebaseio.com",
+  projectId: "latinfroggame",
+  storageBucket: "latinfroggame.firebasestorage.app",
+  messagingSenderId: "196302891263",
+  appId: "1:196302891263:web:0b2fd634738f890580c4ca",
+  measurementId: "G-S5H91BQYMB"
 };
 
 
@@ -140,19 +143,43 @@ const clearLoginError = () => {
 
 const signInWithGoogle = () => {
     clearLoginError();
+    if (firebaseConfig.apiKey.startsWith("PASTE_YOUR")) {
+        showLoginError("Firebase is not configured. Please add your project configuration to index.js.");
+        return;
+    }
+
     signInWithPopup(auth, provider).catch((error) => {
-        let message = "An unknown error occurred during Google sign-in.";
+        console.error("Google Sign-In Error:", error);
+        let message;
         switch (error.code) {
-            case 'auth/popup-closed-by-user': message = 'Sign-in cancelled.'; break;
-            case 'auth/cancelled-popup-request': message = 'Sign-in cancelled.'; break;
+            case 'auth/popup-closed-by-user':
+            case 'auth/cancelled-popup-request':
+                message = 'Sign-in cancelled by user.';
+                break;
+            case 'auth/invalid-api-key':
+                message = 'Invalid Firebase API Key. Check your firebaseConfig.';
+                break;
+            case 'auth/operation-not-allowed':
+                 message = 'Google Sign-In is not enabled. Go to your Firebase console > Authentication > Sign-in method and enable it.';
+                 break;
+            case 'auth/unauthorized-domain':
+                 message = 'This domain is not authorized for your Firebase project. Go to Authentication > Settings > Authorized domains and add it.';
+                 break;
+            default:
+                message = error.message || "An unknown error occurred during Google sign-in.";
         }
-        showLoginError(message);
+        showLoginError(`${message} (Code: ${error.code})`);
     });
 };
 
 const handleSignUp = async (e) => {
     e.preventDefault();
     clearLoginError();
+    if (firebaseConfig.apiKey.startsWith("PASTE_YOUR")) {
+        showLoginError("Firebase is not configured. Please add your project configuration to index.js.");
+        return;
+    }
+
     const signupEmailInput = document.getElementById('signup-email');
     const signupPasswordInput = document.getElementById('signup-password');
     const email = signupEmailInput.value;
@@ -160,19 +187,35 @@ const handleSignUp = async (e) => {
     try {
         await createUserWithEmailAndPassword(auth, email, password);
     } catch (error) {
-        let message = "An unknown error occurred.";
+        console.error("Sign-Up Error:", error);
+        let message;
         switch (error.code) {
-            case 'auth/email-already-in-use': message = 'An account with this email already exists.'; break;
-            case 'auth/invalid-email': message = 'Please enter a valid email.'; break;
-            case 'auth/weak-password': message = 'Password must be at least 6 characters.'; break;
+            case 'auth/email-already-in-use': 
+                message = 'An account with this email already exists.'; 
+                break;
+            case 'auth/invalid-email': 
+                message = 'Please enter a valid email address.'; 
+                break;
+            case 'auth/weak-password': 
+                message = 'Password must be at least 6 characters long.'; 
+                break;
+            case 'auth/operation-not-allowed': 
+                message = 'Email/Password sign-up is not enabled in your Firebase project.'; 
+                break;
+            default:
+                message = error.message || "An unknown error occurred during sign-up.";
         }
-        showLoginError(message);
+        showLoginError(`${message} (Code: ${error.code})`);
     }
 };
 
 const handleSignIn = async (e) => {
     e.preventDefault();
     clearLoginError();
+    if (firebaseConfig.apiKey.startsWith("PASTE_YOUR")) {
+        showLoginError("Firebase is not configured. Please add your project configuration to index.js.");
+        return;
+    }
     const signinEmailInput = document.getElementById('signin-email');
     const signinPasswordInput = document.getElementById('signin-password');
     const email = signinEmailInput.value;
@@ -180,13 +223,22 @@ const handleSignIn = async (e) => {
     try {
         await signInWithEmailAndPassword(auth, email, password);
     } catch (error) {
-        let message = "An unknown error occurred.";
+        console.error("Sign-In Error:", error);
+        let message;
         switch(error.code) {
-            case 'auth/user-not-found': message = 'No account found with this email.'; break;
-            case 'auth/wrong-password': message = 'Incorrect password.'; break;
-            case 'auth/invalid-email': message = 'Please enter a valid email.'; break;
+            case 'auth/invalid-credential':
+                message = 'Invalid email or password.'; 
+                break;
+            case 'auth/invalid-email': 
+                message = 'Please enter a valid email address.'; 
+                break;
+            case 'auth/operation-not-allowed': 
+                message = 'Email/Password sign-in is not enabled in your Firebase project.'; 
+                break;
+            default:
+                message = error.message || "An unknown error occurred during sign-in.";
         }
-        showLoginError(message);
+        showLoginError(`${message} (Code: ${error.code})`);
     }
 };
 
