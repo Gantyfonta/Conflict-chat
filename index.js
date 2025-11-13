@@ -1,5 +1,6 @@
 
 
+
 import { initializeApp } from 'firebase/app';
 import { 
     getAuth, 
@@ -227,6 +228,7 @@ const handleSignIn = async (e) => {
         let message;
         switch(error.code) {
             case 'auth/invalid-credential':
+            case 'auth/invalid-login-credentials':
                 message = 'Invalid email or password.'; 
                 break;
             case 'auth/invalid-email': 
