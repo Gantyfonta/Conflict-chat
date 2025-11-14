@@ -24,7 +24,9 @@ import {
     serverTimestamp,
     getDocs,
     deleteDoc,
-    updateDoc
+    updateDoc,
+    query,
+    orderBy
 } from 'firebase/firestore';
 
 
@@ -68,12 +70,14 @@ const provider = new GoogleAuthProvider();
 // =================================================================================
 const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%2372767d'/%3E%3C/svg%3E";
 const HANGUP_SVG = `<svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.218,2.282a1.042,1.042,0,0,0-1.474,0l-1.7,1.7-2.31-2.31a3.03,3.03,0,0,0-4.286,0L2.282,6.839a3.03,3.03,0,0,0,0,4.286l3.3,3.3-2.24,2.24a1.042,1.042,0,0,0,0,1.474l3.78,3.78a1.042,1.042,0,0,0,1.474,0l2.24-2.24,3.3,3.3a3.03,3.03,0,0,0,4.286,0l4.834-4.834a3.03,3.03,0,0,0,0-4.286L17.218,2.282Z"></path></svg>`;
+const CHAT_SVG = `<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>`;
 
 // =================================================================================
 // App State
 // =================================================================================
 let currentUser = null;
 let roomUnsubscribe = () => {};
+let messagesUnsubscribe = () => {};
 
 // WebRTC State
 let peerConnection;
@@ -269,6 +273,11 @@ const showLobby = () => {
     document.getElementById('room-code-input').value = '';
 };
 
+const toggleChatPanel = () => {
+    const chatPanel = document.getElementById('chat-panel');
+    chatPanel.classList.toggle('translate-x-full');
+};
+
 const showRoomUI = (state) => {
     const lobbyView = document.getElementById('room-lobby-view');
     const videoCallView = document.getElementById('video-call-view');
@@ -281,13 +290,19 @@ const showRoomUI = (state) => {
     videoCallView.classList.remove('hidden');
     roomCodeText.textContent = `CODE: ${activeRoomId}`;
 
+    const controlsHTML = `
+        <button id="chat-toggle-button" class="w-12 h-12 bg-gray-600/50 rounded-full flex items-center justify-center hover:bg-gray-500/50" aria-label="Toggle Chat">${CHAT_SVG}</button>
+        <button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Stop Sharing">${HANGUP_SVG}</button>
+    `;
+
     if (state === 'waiting') {
         status.innerHTML = `
             <h3 class="text-2xl font-semibold">Waiting for someone to join...</h3>
             <p class="text-gray-300 mt-2">Share the room code with a friend.</p>
         `;
-        controls.innerHTML = `<button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Stop Sharing">${HANGUP_SVG}</button>`;
+        controls.innerHTML = controlsHTML;
         document.getElementById('hang-up-button').onclick = hangUp;
+        document.getElementById('chat-toggle-button').onclick = toggleChatPanel;
         
         status.style.display = 'flex';
         controls.style.display = 'flex';
@@ -296,16 +311,15 @@ const showRoomUI = (state) => {
         status.style.display = 'none';
         localVideoContainer.style.display = 'block';
         controls.style.display = 'flex';
-        controls.innerHTML = `
-            <button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Stop Sharing">${HANGUP_SVG}</button>
-        `;
+        controls.innerHTML = controlsHTML;
         document.getElementById('hang-up-button').onclick = hangUp;
+        document.getElementById('chat-toggle-button').onclick = toggleChatPanel;
     }
 };
 
 
 // =================================================================================
-// WebRTC Room Functions
+// WebRTC & Chat Functions
 // =================================================================================
 
 const handleCreateRoom = async () => {
@@ -363,7 +377,8 @@ const handleCreateRoom = async () => {
         },
     };
     await setDoc(roomRef, roomWithOffer);
-
+    
+    listenForMessages(activeRoomId);
     showRoomUI('waiting');
 
     roomUnsubscribe = onSnapshot(roomRef, async snapshot => {
@@ -467,6 +482,8 @@ const handleJoinRoom = async (e) => {
         },
     };
     await updateDoc(roomRef, roomWithAnswer);
+    
+    listenForMessages(activeRoomId);
     showRoomUI('connected');
 
     roomUnsubscribe = onSnapshot(roomRef, snapshot => {
@@ -486,6 +503,76 @@ const handleJoinRoom = async (e) => {
     });
 };
 
+const listenForMessages = (roomId) => {
+    const messagesCollection = collection(db, 'rooms', roomId, 'messages');
+    const q = query(messagesCollection, orderBy('timestamp', 'asc'));
+
+    messagesUnsubscribe = onSnapshot(q, (snapshot) => {
+        const chatMessagesContainer = document.getElementById('chat-messages');
+        chatMessagesContainer.innerHTML = ''; 
+        snapshot.forEach(doc => {
+            const message = doc.data();
+            const messageEl = createMessageElement(message);
+            chatMessagesContainer.appendChild(messageEl);
+        });
+        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+    });
+};
+
+const createMessageElement = (message) => {
+    const messageWrapper = document.createElement('div');
+    const isCurrentUser = message.senderId === currentUser.uid;
+    
+    const avatarUrl = isValidHttpUrl(message.senderAvatar) ? message.senderAvatar : DEFAULT_AVATAR_SVG;
+    
+    // Sanitize message text to prevent XSS
+    const textNode = document.createTextNode(message.text);
+    const p = document.createElement('p');
+    p.className = 'text-sm break-words';
+    p.appendChild(textNode);
+    
+    messageWrapper.className = `flex items-start gap-3 ${isCurrentUser ? 'flex-row-reverse' : ''}`;
+    
+    messageWrapper.innerHTML = `
+        <img src="${avatarUrl}" alt="${message.senderName}" class="w-8 h-8 rounded-full object-cover mt-1 flex-shrink-0">
+        <div class="flex flex-col max-w-[80%]">
+            <div class="px-3 py-2 rounded-lg ${isCurrentUser ? 'bg-blue-500 text-white rounded-br-none' : 'bg-gray-700 text-gray-300 rounded-bl-none'}">
+                <p class="text-sm font-semibold mb-1 ${isCurrentUser ? 'hidden' : ''}">${message.senderName}</p>
+                <div class="message-content-container"></div>
+            </div>
+        </div>
+    `;
+    
+    messageWrapper.querySelector('.message-content-container').appendChild(p);
+
+    return messageWrapper;
+};
+
+const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!activeRoomId || !currentUser) return;
+
+    const chatInput = document.getElementById('chat-input');
+    const messageText = chatInput.value.trim();
+
+    if (messageText) {
+        const messagesCollection = collection(db, 'rooms', activeRoomId, 'messages');
+        try {
+            await addDoc(messagesCollection, {
+                senderId: currentUser.uid,
+                senderName: currentUser.displayName,
+                senderAvatar: currentUser.photoURL,
+                text: messageText,
+                timestamp: serverTimestamp(),
+            });
+            chatInput.value = '';
+            chatInput.focus();
+        } catch (error) {
+            console.error("Error sending message:", error);
+        }
+    }
+};
+
 
 const hangUp = async () => {
     if (localStream) {
@@ -496,6 +583,7 @@ const hangUp = async () => {
     }
     
     if (roomUnsubscribe) roomUnsubscribe();
+    if (messagesUnsubscribe) messagesUnsubscribe();
 
     if (activeRoomId) {
         const roomRef = doc(db, 'rooms', activeRoomId);
@@ -506,6 +594,8 @@ const hangUp = async () => {
             callerCandidates.forEach(async doc => await deleteDoc(doc.ref));
             const calleeCandidates = await getDocs(collection(roomRef, 'calleeCandidates'));
             calleeCandidates.forEach(async doc => await deleteDoc(doc.ref));
+            const messages = await getDocs(collection(roomRef, 'messages'));
+            messages.forEach(async doc => await deleteDoc(doc.ref));
             // Then delete the room
             await deleteDoc(roomRef);
         }
@@ -517,11 +607,14 @@ const hangUp = async () => {
     remoteStream = new MediaStream();
     activeRoomId = null;
     roomUnsubscribe = () => {};
+    messagesUnsubscribe = () => {};
     
     document.getElementById('remote-video').srcObject = null;
     document.getElementById('local-video').srcObject = null;
     
-    // Reset local video position
+    // Reset UI
+    document.getElementById('chat-messages').innerHTML = '';
+    document.getElementById('chat-panel').classList.add('translate-x-full');
     const localVideoContainer = document.getElementById('local-video-container');
     if(localVideoContainer) {
         localVideoContainer.style.top = '1rem';
@@ -558,6 +651,10 @@ document.querySelectorAll('.signout-button').forEach(btn => btn.addEventListener
 // Room Lobby
 document.getElementById('create-room-button').addEventListener('click', handleCreateRoom);
 document.getElementById('join-room-form').addEventListener('submit', handleJoinRoom);
+
+// Video Call View
+document.getElementById('chat-form').addEventListener('submit', handleSendMessage);
+document.getElementById('close-chat-button').addEventListener('click', toggleChatPanel);
 
 // Copy Room Code
 document.getElementById('room-code-display').addEventListener('click', () => {
