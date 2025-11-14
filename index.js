@@ -7,7 +7,8 @@ import {
     getAuth, 
     GoogleAuthProvider, 
     onAuthStateChanged, 
-    signInWithPopup, 
+    signInWithRedirect,
+    getRedirectResult,
     createUserWithEmailAndPassword, 
     signInWithEmailAndPassword, 
     signOut,
@@ -96,6 +97,49 @@ const iceServers = {
 // Authentication
 // =================================================================================
 
+const showRedirectLoader = () => {
+    document.getElementById('redirect-loader').classList.remove('hidden');
+};
+const hideRedirectLoader = () => {
+    document.getElementById('redirect-loader').classList.add('hidden');
+};
+
+const handleRedirectResult = async () => {
+    try {
+        const result = await getRedirectResult(auth);
+        if (result) {
+            // Successfully signed in. onAuthStateChanged will handle the UI update.
+            console.log('Successfully authenticated via Google redirect.');
+        } else {
+            // This is a normal page load. Check for connectivity issues.
+            try {
+                // A lightweight check against a non-existent doc. It will fail if blocked.
+                await getDoc(doc(db, 'healthcheck', 'status'));
+            } catch (error) {
+                 if (error.code === 'unavailable' || error.message.includes('Failed to fetch')) {
+                    showLoginError(
+                        'Connection Failed', 
+                        'Could not connect to the server. Please disable ad-blockers or check your network, then refresh the page.',
+                        'network-error'
+                    );
+                }
+            }
+        }
+    } catch (error) {
+        hideRedirectLoader();
+        console.error("Google Sign-In Redirect Result Error:", error);
+        // Handle specific errors from redirect result
+        switch (error.code) {
+            case 'auth/account-exists-with-different-credential':
+                showLoginError('Sign-In Failed', 'An account already exists with this email but using a different sign-in method (e.g., password).', error.code);
+                break;
+            default:
+                showLoginError("Google Sign-In Error", error.message || "An unknown error occurred.", error.code);
+        }
+    }
+};
+handleRedirectResult();
+
 onAuthStateChanged(auth, async (user) => {
   const loginView = document.getElementById('login-view');
   const appView = document.getElementById('app-view');
@@ -150,8 +194,10 @@ const clearLoginError = () => {
 
 const signInWithGoogle = () => {
     clearLoginError();
-    signInWithPopup(auth, provider).catch((error) => {
-        console.error("Google Sign-In Error:", error);
+    showRedirectLoader();
+    signInWithRedirect(auth, provider).catch((error) => {
+        hideRedirectLoader();
+        console.error("Google Sign-In Redirect Error:", error);
         switch (error.code) {
             case 'auth/popup-closed-by-user':
             case 'auth/cancelled-popup-request':
