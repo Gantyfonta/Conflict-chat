@@ -518,19 +518,30 @@ const handleCreateRoom = async () => {
             if (data.answer) {
                 const isNewAnswer = !peerConnection.currentRemoteDescription || 
                                     peerConnection.currentRemoteDescription.sdp !== data.answer.sdp;
-                if (isNewAnswer) {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-                    showRoomUI('connected');
+                
+                // CRITICAL FIX: Only process an answer if we are expecting one (i.e., in 'have-local-offer' state).
+                // This prevents errors when the listener fires unexpectedly while the connection is stable.
+                if (isNewAnswer && peerConnection.signalingState === 'have-local-offer') {
+                    try {
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                        showRoomUI('connected');
 
-                    if (!listenerAttached) {
-                        listenerAttached = true;
-                        calleeCandidatesUnsubscribe = onSnapshot(collection(roomRef, 'calleeCandidates'), snapshot => {
-                            snapshot.docChanges().forEach(async change => {
-                                if (change.type === 'added') {
-                                    await peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
-                                }
+                        if (!listenerAttached) {
+                            listenerAttached = true;
+                            // Now that the remote description is set, we can listen for and add ICE candidates.
+                            calleeCandidatesUnsubscribe = onSnapshot(collection(roomRef, 'calleeCandidates'), snapshot => {
+                                snapshot.docChanges().forEach(async change => {
+                                    if (change.type === 'added') {
+                                        // Adding a check for currentRemoteDescription is good practice before adding candidates.
+                                        if (peerConnection.currentRemoteDescription) {
+                                           await peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+                                        }
+                                    }
+                                });
                             });
-                        });
+                        }
+                    } catch (error) {
+                        console.error("Error setting remote description for creator:", error);
                     }
                 }
             }
