@@ -1,3 +1,4 @@
+
 import { initializeApp } from 'firebase/app';
 import { 
     getAuth, 
@@ -23,7 +24,8 @@ import {
     deleteDoc,
     updateDoc,
     query,
-    orderBy
+    orderBy,
+    writeBatch
 } from 'firebase/firestore';
 
 
@@ -70,6 +72,7 @@ const HANGUP_SVG = `<svg class="w-8 h-8 text-white" fill="currentColor" viewBox=
 const CHAT_SVG = `<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>`;
 const SHARE_SCREEN_SVG = `<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>`;
 const STOP_SHARE_SVG = `<svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1zm4 0a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>`;
+const DEBOUNCE_DELAY_MS = 200;
 
 // =================================================================================
 // App State
@@ -81,16 +84,23 @@ let calleeCandidatesUnsubscribe = () => {};
 
 // WebRTC State
 let peerConnection;
-let localStream;
+let localStream; // Will now hold the camera/mic stream
+let screenStream; // Will hold the screen share stream
 let remoteStream = new MediaStream();
 let activeRoomId = null;
-let isSharing = false;
+let isScreenSharing = false;
 const iceServers = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
   ],
 };
+
+// ICE Candidate Batching State
+let callerCandidatesQueue = [];
+let calleeCandidatesQueue = [];
+let callerDebounceTimer = null;
+let calleeDebounceTimer = null;
 
 
 // =================================================================================
@@ -338,7 +348,6 @@ const showRoomUI = (state) => {
     const videoCallView = document.getElementById('video-call-view');
     const status = document.getElementById('video-call-status');
     const controls = document.getElementById('video-call-controls');
-    const localVideoContainer = document.getElementById('local-video-container');
     const roomCodeText = document.getElementById('room-code-text');
 
     lobbyView.style.display = 'none';
@@ -346,8 +355,8 @@ const showRoomUI = (state) => {
     roomCodeText.textContent = `CODE: ${activeRoomId}`;
 
     const controlsHTML = `
-        <button id="share-screen-button" class="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center hover:bg-blue-600" aria-label="Toggle Screen Share">
-            ${isSharing ? STOP_SHARE_SVG : SHARE_SCREEN_SVG}
+        <button id="share-screen-button" class="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center hover:bg-blue-600" aria-label="Share Screen">
+            ${SHARE_SCREEN_SVG}
         </button>
         <button id="chat-toggle-button" class="w-12 h-12 bg-gray-600/50 rounded-full flex items-center justify-center hover:bg-gray-500/50" aria-label="Toggle Chat">${CHAT_SVG}</button>
         <button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Leave Room">${HANGUP_SVG}</button>
@@ -357,8 +366,6 @@ const showRoomUI = (state) => {
     document.getElementById('chat-toggle-button').onclick = toggleChatPanel;
     document.getElementById('share-screen-button').onclick = toggleScreenShare;
     
-    localVideoContainer.style.display = isSharing ? 'block' : 'none';
-
     if (state === 'waiting') {
         status.innerHTML = `
             <h3 class="text-2xl font-semibold">Waiting for someone to join...</h3>
@@ -376,90 +383,140 @@ const showRoomUI = (state) => {
 // =================================================================================
 // WebRTC & Chat Functions
 // =================================================================================
-const toggleScreenShare = async () => {
-    if (isSharing) {
-        await stopScreenShare();
-    } else {
-        await startScreenShare();
+
+const flushCallerCandidates = async () => {
+    if (callerCandidatesQueue.length === 0 || !activeRoomId) return;
+
+    const roomRef = doc(db, 'rooms', activeRoomId);
+    const callerCandidatesCollection = collection(roomRef, 'callerCandidates');
+    const batch = writeBatch(db);
+    
+    const candidatesToWrite = [...callerCandidatesQueue];
+    callerCandidatesQueue = [];
+    
+    candidatesToWrite.forEach(candidate => {
+        const candidateDocRef = doc(callerCandidatesCollection);
+        batch.set(candidateDocRef, candidate);
+    });
+
+    try {
+        await batch.commit();
+    } catch (error) {
+        console.error("Error writing caller candidates batch:", error);
+    }
+
+    clearTimeout(callerDebounceTimer);
+    callerDebounceTimer = null;
+};
+
+const flushCalleeCandidates = async () => {
+    if (calleeCandidatesQueue.length === 0 || !activeRoomId) return;
+    
+    const roomRef = doc(db, 'rooms', activeRoomId);
+    const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
+    const batch = writeBatch(db);
+
+    const candidatesToWrite = [...calleeCandidatesQueue];
+    calleeCandidatesQueue = [];
+
+    candidatesToWrite.forEach(candidate => {
+        const candidateDocRef = doc(calleeCandidatesCollection);
+        batch.set(candidateDocRef, candidate);
+    });
+
+    try {
+        await batch.commit();
+    } catch (error) {
+        console.error("Error writing callee candidates batch:", error);
+    }
+    
+    clearTimeout(calleeDebounceTimer);
+    calleeDebounceTimer = null;
+};
+
+const initializeLocalMedia = async () => {
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        document.getElementById('local-video').srcObject = localStream;
+        document.getElementById('local-video-container').style.display = 'block';
+    } catch (error) {
+        console.error("Could not get user media", error);
+        showGlobalError('Media Device Error', 'Camera and microphone access is required to use this application. Please grant permission and refresh the page.');
+        throw error;
     }
 };
 
-const startScreenShare = async () => {
-    const statusEl = document.getElementById('video-call-status');
-    try {
-        localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    } catch (error) {
-        console.error("Could not get display media.", error);
-        if (error.name === 'NotAllowedError') {
-            statusEl.innerHTML = `<h3 class="text-xl font-semibold text-red-400">Permission Denied</h3><p class="mt-2">You need to grant screen sharing permission to continue.</p>`;
-            statusEl.style.display = 'flex';
-            setTimeout(() => {
-                const remoteVideo = document.getElementById('remote-video');
-                const isConnected = remoteVideo.srcObject && remoteVideo.srcObject.getTracks().length > 0;
-                showRoomUI(isConnected ? 'connected' : 'waiting');
-            }, 4000);
-        }
+const toggleScreenShare = async () => {
+    if (!peerConnection || !localStream) return;
+
+    const videoSender = peerConnection.getSenders().find(sender => sender.track && sender.track.kind === 'video');
+    if (!videoSender) {
+        console.error("No video sender found to replace track.");
         return;
     }
 
-    isSharing = true;
-    document.getElementById('local-video').srcObject = localStream;
-    document.getElementById('local-video-container').style.display = 'block';
+    const screenShareButton = document.getElementById('share-screen-button');
+    const remoteVideo = document.getElementById('remote-video');
 
-    const shareButton = document.getElementById('share-screen-button');
-    if (shareButton) shareButton.innerHTML = STOP_SHARE_SVG;
+    if (isScreenSharing) {
+        // --- STOP SCREEN SHARING ---
+        if (screenStream) {
+            screenStream.getTracks().forEach(track => track.stop());
+            screenStream = null;
+        }
 
-    const videoTrack = localStream.getVideoTracks()[0];
-    if (videoTrack) {
-        videoTrack.onended = () => {
-            console.log("Screen sharing ended by user via browser UI.");
-            stopScreenShare();
-        };
-    }
-
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    try {
-        const roomRef = doc(db, 'rooms', activeRoomId);
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        await updateDoc(roomRef, { 
-            offer: { type: offer.type, sdp: offer.sdp } 
-        });
-    } catch (error) {
-        console.error("Error during screen share renegotiation:", error);
-    }
-};
-
-const stopScreenShare = async () => {
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-    }
-    localStream = null;
-    isSharing = false;
-
-    document.getElementById('local-video').srcObject = null;
-    document.getElementById('local-video-container').style.display = 'none';
-
-    const shareButton = document.getElementById('share-screen-button');
-    if (shareButton) shareButton.innerHTML = SHARE_SCREEN_SVG;
-
-    if (peerConnection && peerConnection.connectionState !== 'closed') {
         try {
-            for (const sender of peerConnection.getSenders()) {
-                if (sender.track) {
-                    peerConnection.removeTrack(sender);
-                }
-            }
+            const newCameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const newCameraTrack = newCameraStream.getVideoTracks()[0];
             
-            const roomRef = doc(db, 'rooms', activeRoomId);
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            await updateDoc(roomRef, { 
-                offer: { type: offer.type, sdp: offer.sdp } 
-            });
-        } catch(error) {
-            console.error("Error stopping screen share and renegotiating:", error);
+            await videoSender.replaceTrack(newCameraTrack);
+
+            const oldTrack = localStream.getVideoTracks()[0];
+            localStream.removeTrack(oldTrack);
+            localStream.addTrack(newCameraTrack);
+            document.getElementById('local-video').srcObject = localStream;
+
+            isScreenSharing = false;
+            if(remoteVideo) {
+                remoteVideo.classList.remove('object-contain');
+                remoteVideo.classList.add('object-cover');
+            }
+            screenShareButton.classList.remove('bg-green-500', 'hover:bg-green-600');
+            screenShareButton.classList.add('bg-blue-500', 'hover:bg-blue-600');
+            screenShareButton.innerHTML = SHARE_SCREEN_SVG;
+            screenShareButton.setAttribute('aria-label', 'Share screen');
+
+        } catch (error) {
+            console.error("Error getting camera for fallback:", error);
+        }
+    } else {
+        // --- START SCREEN SHARING ---
+        try {
+            screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+            const screenTrack = screenStream.getVideoTracks()[0];
+            
+            await videoSender.replaceTrack(screenTrack);
+            
+            document.getElementById('local-video').srcObject = screenStream;
+            isScreenSharing = true;
+
+            if(remoteVideo) {
+                remoteVideo.classList.add('object-contain');
+                remoteVideo.classList.remove('object-cover');
+            }
+            screenShareButton.classList.add('bg-green-500', 'hover:bg-green-600');
+            screenShareButton.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+            screenShareButton.innerHTML = STOP_SHARE_SVG;
+            screenShareButton.setAttribute('aria-label', 'Stop sharing screen');
+
+            screenTrack.onended = () => {
+                if (isScreenSharing) {
+                    toggleScreenShare(); // Call this function again to revert to camera.
+                }
+            };
+        } catch (error) {
+            console.error("Error starting screen share:", error);
+            isScreenSharing = false;
         }
     }
 };
@@ -478,17 +535,22 @@ const createPeerConnection = (roomId) => {
 
 const handleCreateRoom = async () => {
     if (activeRoomId) return;
+    
+    await initializeLocalMedia();
 
     const roomCollection = collection(db, 'rooms');
     const roomRef = doc(roomCollection);
     activeRoomId = roomRef.id;
 
     createPeerConnection(activeRoomId);
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    const callerCandidatesCollection = collection(roomRef, 'callerCandidates');
     peerConnection.onicecandidate = event => {
         if (event.candidate) {
-            addDoc(callerCandidatesCollection, event.candidate.toJSON());
+            callerCandidatesQueue.push(event.candidate.toJSON());
+            if (!callerDebounceTimer) {
+                callerDebounceTimer = setTimeout(flushCallerCandidates, DEBOUNCE_DELAY_MS);
+            }
         }
     };
 
@@ -503,7 +565,7 @@ const handleCreateRoom = async () => {
     await setDoc(roomRef, roomWithOffer);
     
     listenForMessages(activeRoomId);
-    isSharing = false;
+    isScreenSharing = false;
     showRoomUI('waiting');
 
     let listenerAttached = false;
@@ -519,8 +581,6 @@ const handleCreateRoom = async () => {
                 const isNewAnswer = !peerConnection.currentRemoteDescription || 
                                     peerConnection.currentRemoteDescription.sdp !== data.answer.sdp;
                 
-                // CRITICAL FIX: Only process an answer if we are expecting one (i.e., in 'have-local-offer' state).
-                // This prevents errors when the listener fires unexpectedly while the connection is stable.
                 if (isNewAnswer && peerConnection.signalingState === 'have-local-offer') {
                     try {
                         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
@@ -528,11 +588,9 @@ const handleCreateRoom = async () => {
 
                         if (!listenerAttached) {
                             listenerAttached = true;
-                            // Now that the remote description is set, we can listen for and add ICE candidates.
                             calleeCandidatesUnsubscribe = onSnapshot(collection(roomRef, 'calleeCandidates'), snapshot => {
                                 snapshot.docChanges().forEach(async change => {
                                     if (change.type === 'added') {
-                                        // Adding a check for currentRemoteDescription is good practice before adding candidates.
                                         if (peerConnection.currentRemoteDescription) {
                                            await peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
                                         }
@@ -575,15 +633,19 @@ const handleJoinRoom = async (e) => {
             joinError.textContent = "You can't join your own room."; return;
         }
         
+        await initializeLocalMedia();
         joinError.textContent = '';
         activeRoomId = roomId;
 
         createPeerConnection(roomId);
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
         
-        const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
         peerConnection.onicecandidate = event => {
             if (event.candidate) {
-                addDoc(calleeCandidatesCollection, event.candidate.toJSON());
+                calleeCandidatesQueue.push(event.candidate.toJSON());
+                if (!calleeDebounceTimer) {
+                    calleeDebounceTimer = setTimeout(flushCalleeCandidates, DEBOUNCE_DELAY_MS);
+                }
             }
         };
 
@@ -597,7 +659,7 @@ const handleJoinRoom = async (e) => {
         });
         
         listenForMessages(activeRoomId);
-        isSharing = false;
+        isScreenSharing = false;
         showRoomUI('connected');
 
         roomUnsubscribe = onSnapshot(roomRef, 
@@ -723,6 +785,9 @@ const hangUp = async () => {
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
     }
+    if (screenStream) {
+        screenStream.getTracks().forEach(track => track.stop());
+    }
     if (peerConnection) {
         peerConnection.close();
     }
@@ -730,6 +795,14 @@ const hangUp = async () => {
     if (roomUnsubscribe) roomUnsubscribe();
     if (messagesUnsubscribe) messagesUnsubscribe();
     if (calleeCandidatesUnsubscribe) calleeCandidatesUnsubscribe();
+
+    clearTimeout(callerDebounceTimer);
+    callerDebounceTimer = null;
+    callerCandidatesQueue = [];
+
+    clearTimeout(calleeDebounceTimer);
+    calleeDebounceTimer = null;
+    calleeCandidatesQueue = [];
 
     if (activeRoomId && currentUser) {
         try {
@@ -751,9 +824,10 @@ const hangUp = async () => {
     // Reset state
     peerConnection = null;
     localStream = null;
+    screenStream = null;
     remoteStream = new MediaStream();
     activeRoomId = null;
-    isSharing = false;
+    isScreenSharing = false;
     roomUnsubscribe = () => {};
     messagesUnsubscribe = () => {};
     calleeCandidatesUnsubscribe = () => {};
