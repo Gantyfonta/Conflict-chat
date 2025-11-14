@@ -1,7 +1,3 @@
-
-
-
-
 import { initializeApp } from 'firebase/app';
 import { 
     getAuth, 
@@ -97,6 +93,20 @@ const iceServers = {
 
 
 // =================================================================================
+// Global Error Handling
+// =================================================================================
+const showGlobalError = (title, message) => {
+    document.getElementById('global-error-title').textContent = title;
+    document.getElementById('global-error-message').textContent = message;
+    document.getElementById('global-error-overlay').classList.remove('hidden');
+};
+
+const hideGlobalError = () => {
+    document.getElementById('global-error-overlay').classList.add('hidden');
+};
+
+
+// =================================================================================
 // Authentication
 // =================================================================================
 
@@ -111,19 +121,15 @@ const handleRedirectResult = async () => {
     try {
         const result = await getRedirectResult(auth);
         if (result) {
-            // Successfully signed in. onAuthStateChanged will handle the UI update.
             console.log('Successfully authenticated via Google redirect.');
         } else {
-            // This is a normal page load. Check for connectivity issues.
             try {
-                // A lightweight check against a non-existent doc. It will fail if blocked.
                 await getDoc(doc(db, 'healthcheck', 'status'));
             } catch (error) {
-                 if (error.code === 'unavailable' || error.message.includes('Failed to fetch')) {
-                    showLoginError(
+                 if (error.code === 'unavailable' || error.message.includes('Failed to fetch') || error.code === 'permission-denied') {
+                    showGlobalError(
                         'Connection Failed', 
-                        'Could not connect to the server. Please disable ad-blockers or check your network, then refresh the page.',
-                        'network-error'
+                        'Could not connect to the server. This is often caused by an ad-blocker, firewall, or network issue. Please check your setup, then refresh the page.'
                     );
                 }
             }
@@ -131,7 +137,6 @@ const handleRedirectResult = async () => {
     } catch (error) {
         hideRedirectLoader();
         console.error("Google Sign-In Redirect Result Error:", error);
-        // Handle specific errors from redirect result
         switch (error.code) {
             case 'auth/account-exists-with-different-credential':
                 showLoginError('Sign-In Failed', 'An account already exists with this email but using a different sign-in method (e.g., password).', error.code);
@@ -148,6 +153,7 @@ onAuthStateChanged(auth, async (user) => {
   const appView = document.getElementById('app-view');
 
   if (user) {
+      hideGlobalError();
       const userDocRef = doc(db, 'users', user.uid);
       const userDoc = await getDoc(userDocRef);
 
@@ -204,7 +210,6 @@ const signInWithGoogle = () => {
         switch (error.code) {
             case 'auth/popup-closed-by-user':
             case 'auth/cancelled-popup-request':
-                // Don't show an error for this, it's a user action.
                 break;
             case 'auth/invalid-api-key':
                 showLoginError('Configuration Error', 'Invalid Firebase API Key. Check your `firebaseConfig` in index.js.', error.code);
@@ -379,11 +384,20 @@ const toggleScreenShare = async () => {
 };
 
 const startScreenShare = async () => {
+    const statusEl = document.getElementById('video-call-status');
     try {
         localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     } catch (error) {
         console.error("Could not get display media.", error);
-        alert("Screen sharing permission is required.");
+        if (error.name === 'NotAllowedError') {
+            statusEl.innerHTML = `<h3 class="text-xl font-semibold text-red-400">Permission Denied</h3><p class="mt-2">You need to grant screen sharing permission to continue.</p>`;
+            statusEl.style.display = 'flex';
+            setTimeout(() => {
+                const remoteVideo = document.getElementById('remote-video');
+                const isConnected = remoteVideo.srcObject && remoteVideo.srcObject.getTracks().length > 0;
+                showRoomUI(isConnected ? 'connected' : 'waiting');
+            }, 4000);
+        }
         return;
     }
 
@@ -404,13 +418,16 @@ const startScreenShare = async () => {
 
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    // Renegotiate by creating and sending a new offer
-    const roomRef = doc(db, 'rooms', activeRoomId);
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    await updateDoc(roomRef, { 
-        offer: { type: offer.type, sdp: offer.sdp } 
-    });
+    try {
+        const roomRef = doc(db, 'rooms', activeRoomId);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        await updateDoc(roomRef, { 
+            offer: { type: offer.type, sdp: offer.sdp } 
+        });
+    } catch (error) {
+        console.error("Error during screen share renegotiation:", error);
+    }
 };
 
 const stopScreenShare = async () => {
@@ -426,23 +443,37 @@ const stopScreenShare = async () => {
     const shareButton = document.getElementById('share-screen-button');
     if (shareButton) shareButton.innerHTML = SHARE_SCREEN_SVG;
 
-    if (peerConnection) {
-        for (const sender of peerConnection.getSenders()) {
-            if (sender.track) {
-                peerConnection.removeTrack(sender);
+    if (peerConnection && peerConnection.connectionState !== 'closed') {
+        try {
+            for (const sender of peerConnection.getSenders()) {
+                if (sender.track) {
+                    peerConnection.removeTrack(sender);
+                }
             }
+            
+            const roomRef = doc(db, 'rooms', activeRoomId);
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            await updateDoc(roomRef, { 
+                offer: { type: offer.type, sdp: offer.sdp } 
+            });
+        } catch(error) {
+            console.error("Error stopping screen share and renegotiating:", error);
         }
-        
-        // Renegotiate to signal track removal
-        const roomRef = doc(db, 'rooms', activeRoomId);
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        await updateDoc(roomRef, { 
-            offer: { type: offer.type, sdp: offer.sdp } 
-        });
     }
 };
 
+const createPeerConnection = (roomId) => {
+    peerConnection = new RTCPeerConnection(iceServers);
+    remoteStream.getTracks().forEach(track => remoteStream.removeTrack(track));
+    document.getElementById('remote-video').srcObject = remoteStream;
+
+    peerConnection.ontrack = event => {
+        event.streams[0].getTracks().forEach(track => {
+            remoteStream.addTrack(track);
+        });
+    };
+};
 
 const handleCreateRoom = async () => {
     if (activeRoomId) return;
@@ -451,9 +482,7 @@ const handleCreateRoom = async () => {
     const roomRef = doc(roomCollection);
     activeRoomId = roomRef.id;
 
-    peerConnection = new RTCPeerConnection(iceServers);
-    remoteStream.getTracks().forEach(track => remoteStream.removeTrack(track));
-    document.getElementById('remote-video').srcObject = remoteStream;
+    createPeerConnection(activeRoomId);
 
     const callerCandidatesCollection = collection(roomRef, 'callerCandidates');
     peerConnection.onicecandidate = event => {
@@ -462,22 +491,13 @@ const handleCreateRoom = async () => {
         }
     };
 
-    peerConnection.ontrack = event => {
-        event.streams[0].getTracks().forEach(track => {
-            remoteStream.addTrack(track);
-        });
-    };
-
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
 
     const roomWithOffer = {
         creatorId: currentUser.uid,
         createdAt: serverTimestamp(),
-        offer: {
-            type: offer.type,
-            sdp: offer.sdp,
-        },
+        offer: { type: offer.type, sdp: offer.sdp },
     };
     await setDoc(roomRef, roomWithOffer);
     
@@ -485,30 +505,35 @@ const handleCreateRoom = async () => {
     isSharing = false;
     showRoomUI('waiting');
 
-    roomUnsubscribe = onSnapshot(roomRef, async snapshot => {
-        if (!snapshot.exists()) {
-            console.log("Room deleted, hanging up.");
-            hangUp();
-            return;
-        }
-
-        const data = snapshot.data();
-        if (data.answer) {
-            const isNewAnswer = !peerConnection.currentRemoteDescription || 
-                                peerConnection.currentRemoteDescription.sdp !== data.answer.sdp;
-            if (isNewAnswer) {
-                const answerDescription = new RTCSessionDescription(data.answer);
-                await peerConnection.setRemoteDescription(answerDescription);
-                showRoomUI('connected');
+    roomUnsubscribe = onSnapshot(roomRef, 
+        async (snapshot) => {
+            hideGlobalError();
+            if (!snapshot.exists()) {
+                hangUp();
+                return;
+            }
+            const data = snapshot.data();
+            if (data.answer) {
+                const isNewAnswer = !peerConnection.currentRemoteDescription || 
+                                    peerConnection.currentRemoteDescription.sdp !== data.answer.sdp;
+                if (isNewAnswer) {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                    showRoomUI('connected');
+                }
+            }
+        },
+        (error) => {
+            console.error("Room listener failed:", error);
+            if (error.code === 'unavailable' || error.code === 'permission-denied') {
+                showGlobalError('Connection Interrupted', 'Lost connection to the room. This might be due to an ad-blocker or network issue. Please refresh the page.');
             }
         }
-    });
+    );
 
     onSnapshot(collection(roomRef, 'calleeCandidates'), snapshot => {
         snapshot.docChanges().forEach(async change => {
             if (change.type === 'added') {
-                let data = change.doc.data();
-                await peerConnection.addIceCandidate(new RTCIceCandidate(data));
+                await peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
             }
         });
     });
@@ -520,101 +545,107 @@ const handleJoinRoom = async (e) => {
     
     const roomId = document.getElementById('room-code-input').value;
     const roomRef = doc(db, 'rooms', roomId);
-    const roomDoc = await getDoc(roomRef);
     const joinError = document.getElementById('join-error');
-
-    if (!roomDoc.exists()) {
-        joinError.textContent = 'Room not found.';
-        return;
-    }
-    if (roomDoc.data().joinerId) {
-        joinError.textContent = 'Room is full.';
-        return;
-    }
-    if (roomDoc.data().creatorId === currentUser.uid) {
-        joinError.textContent = "You can't join your own room.";
-        return;
-    }
     
-    joinError.textContent = '';
-    activeRoomId = roomId;
-
-    peerConnection = new RTCPeerConnection(iceServers);
-    remoteStream.getTracks().forEach(track => remoteStream.removeTrack(track));
-    document.getElementById('remote-video').srcObject = remoteStream;
-
-    const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
-    peerConnection.onicecandidate = event => {
-        if (event.candidate) {
-            addDoc(calleeCandidatesCollection, event.candidate.toJSON());
+    try {
+        const roomDoc = await getDoc(roomRef);
+        if (!roomDoc.exists()) {
+            joinError.textContent = 'Room not found.'; return;
         }
-    };
-    
-    peerConnection.ontrack = event => {
-        event.streams[0].getTracks().forEach(track => {
-            remoteStream.addTrack(track);
-        });
-    };
-
-    const offer = roomDoc.data().offer;
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-
-    const roomWithAnswer = {
-        joinerId: currentUser.uid,
-        answer: {
-            type: answer.type,
-            sdp: answer.sdp,
-        },
-    };
-    await updateDoc(roomRef, roomWithAnswer);
-    
-    listenForMessages(activeRoomId);
-    isSharing = false;
-    showRoomUI('connected');
-
-    roomUnsubscribe = onSnapshot(roomRef, async snapshot => {
-        if (!snapshot.exists()) {
-            console.log("Room deleted, hanging up.");
-            hangUp();
-            return;
+        if (roomDoc.data().joinerId) {
+            joinError.textContent = 'Room is full.'; return;
         }
-        const data = snapshot.data();
-        // Handle renegotiation offer from creator
-        if (data.offer && peerConnection.remoteDescription && data.offer.sdp !== peerConnection.remoteDescription.sdp) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-            const newAnswer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(newAnswer);
-            await updateDoc(roomRef, { answer: { type: newAnswer.type, sdp: newAnswer.sdp } });
+        if (roomDoc.data().creatorId === currentUser.uid) {
+            joinError.textContent = "You can't join your own room."; return;
         }
-    });
+        
+        joinError.textContent = '';
+        activeRoomId = roomId;
 
-    onSnapshot(collection(roomRef, 'callerCandidates'), snapshot => {
-        snapshot.docChanges().forEach(async change => {
-            if (change.type === 'added') {
-                let data = change.doc.data();
-                await peerConnection.addIceCandidate(new RTCIceCandidate(data));
+        createPeerConnection(roomId);
+        
+        const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
+        peerConnection.onicecandidate = event => {
+            if (event.candidate) {
+                addDoc(calleeCandidatesCollection, event.candidate.toJSON());
             }
+        };
+
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(roomDoc.data().offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+
+        await updateDoc(roomRef, {
+            joinerId: currentUser.uid,
+            answer: { type: answer.type, sdp: answer.sdp },
         });
-    });
+        
+        listenForMessages(activeRoomId);
+        isSharing = false;
+        showRoomUI('connected');
+
+        roomUnsubscribe = onSnapshot(roomRef, 
+            async (snapshot) => {
+                hideGlobalError();
+                if (!snapshot.exists()) {
+                    hangUp(); return;
+                }
+                const data = snapshot.data();
+                if (data.offer && peerConnection.remoteDescription && data.offer.sdp !== peerConnection.remoteDescription.sdp) {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                    const newAnswer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(newAnswer);
+                    await updateDoc(roomRef, { answer: { type: newAnswer.type, sdp: newAnswer.sdp } });
+                }
+            },
+            (error) => {
+                console.error("Room listener failed:", error);
+                if (error.code === 'unavailable' || error.code === 'permission-denied') {
+                    showGlobalError('Connection Interrupted', 'Lost connection to the room. This might be due to an ad-blocker or network issue. Please refresh the page.');
+                }
+            }
+        );
+
+        onSnapshot(collection(roomRef, 'callerCandidates'), snapshot => {
+            snapshot.docChanges().forEach(async change => {
+                if (change.type === 'added') {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+                }
+            });
+        });
+    } catch (error) {
+        console.error("Failed to join room:", error);
+        joinError.textContent = "Error joining room.";
+    }
 };
 
 const listenForMessages = (roomId) => {
     const messagesCollection = collection(db, 'rooms', roomId, 'messages');
     const q = query(messagesCollection, orderBy('timestamp', 'asc'));
 
-    messagesUnsubscribe = onSnapshot(q, (snapshot) => {
-        const chatMessagesContainer = document.getElementById('chat-messages');
-        chatMessagesContainer.innerHTML = ''; 
-        snapshot.forEach(doc => {
-            const message = doc.data();
-            const messageEl = createMessageElement(message);
-            chatMessagesContainer.appendChild(messageEl);
-        });
-        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
-    });
+    messagesUnsubscribe = onSnapshot(q, 
+        (snapshot) => {
+            hideGlobalError();
+            const chatMessagesContainer = document.getElementById('chat-messages');
+            if (snapshot.empty) {
+                chatMessagesContainer.innerHTML = '<p class="text-center text-sm text-gray-500">No messages yet. Say hi!</p>';
+                return;
+            }
+            chatMessagesContainer.innerHTML = ''; 
+            snapshot.forEach(doc => {
+                const message = doc.data();
+                const messageEl = createMessageElement(message);
+                chatMessagesContainer.appendChild(messageEl);
+            });
+            chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+        },
+        (error) => {
+            console.error("Message listener failed:", error);
+            if (error.code === 'unavailable' || error.code === 'permission-denied') {
+                showGlobalError('Connection Interrupted', 'Could not load chat messages. Check your connection or ad-blocker settings and refresh.');
+            }
+        }
+    );
 };
 
 const createMessageElement = (message) => {
@@ -623,7 +654,6 @@ const createMessageElement = (message) => {
     
     const avatarUrl = isValidHttpUrl(message.senderAvatar) ? message.senderAvatar : DEFAULT_AVATAR_SVG;
     
-    // Sanitize message text to prevent XSS
     const textNode = document.createTextNode(message.text);
     const p = document.createElement('p');
     p.className = 'text-sm break-words';
@@ -656,6 +686,7 @@ const handleSendMessage = async (e) => {
     if (messageText) {
         const messagesCollection = collection(db, 'rooms', activeRoomId, 'messages');
         try {
+            chatInput.value = '';
             await addDoc(messagesCollection, {
                 senderId: currentUser.uid,
                 senderName: currentUser.displayName,
@@ -663,10 +694,10 @@ const handleSendMessage = async (e) => {
                 text: messageText,
                 timestamp: serverTimestamp(),
             });
-            chatInput.value = '';
             chatInput.focus();
         } catch (error) {
             console.error("Error sending message:", error);
+            chatInput.value = messageText; // Restore text on failure
         }
     }
 };
@@ -684,18 +715,19 @@ const hangUp = async () => {
     if (messagesUnsubscribe) messagesUnsubscribe();
 
     if (activeRoomId && currentUser) {
-        const roomRef = doc(db, 'rooms', activeRoomId);
-        const roomDoc = await getDoc(roomRef);
-        if (roomDoc.exists() && roomDoc.data().creatorId === currentUser.uid) {
-             // Delete all subcollection documents first
-            const callerCandidates = await getDocs(collection(roomRef, 'callerCandidates'));
-            callerCandidates.forEach(async doc => await deleteDoc(doc.ref));
-            const calleeCandidates = await getDocs(collection(roomRef, 'calleeCandidates'));
-            calleeCandidates.forEach(async doc => await deleteDoc(doc.ref));
-            const messages = await getDocs(collection(roomRef, 'messages'));
-            messages.forEach(async doc => await deleteDoc(doc.ref));
-            // Then delete the room
-            await deleteDoc(roomRef);
+        try {
+            const roomRef = doc(db, 'rooms', activeRoomId);
+            const roomDoc = await getDoc(roomRef);
+            if (roomDoc.exists() && roomDoc.data().creatorId === currentUser.uid) {
+                const subcollections = ['callerCandidates', 'calleeCandidates', 'messages'];
+                for (const sub of subcollections) {
+                    const snapshot = await getDocs(collection(roomRef, sub));
+                    snapshot.forEach(d => deleteDoc(d.ref));
+                }
+                await deleteDoc(roomRef);
+            }
+        } catch(error) {
+            console.error("Error cleaning up room:", error);
         }
     }
     
