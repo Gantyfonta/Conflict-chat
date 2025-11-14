@@ -77,6 +77,7 @@ const STOP_SHARE_SVG = `<svg class="w-6 h-6 text-white" fill="currentColor" view
 let currentUser = null;
 let roomUnsubscribe = () => {};
 let messagesUnsubscribe = () => {};
+let calleeCandidatesUnsubscribe = () => {};
 
 // WebRTC State
 let peerConnection;
@@ -505,6 +506,7 @@ const handleCreateRoom = async () => {
     isSharing = false;
     showRoomUI('waiting');
 
+    let listenerAttached = false;
     roomUnsubscribe = onSnapshot(roomRef, 
         async (snapshot) => {
             hideGlobalError();
@@ -519,6 +521,17 @@ const handleCreateRoom = async () => {
                 if (isNewAnswer) {
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
                     showRoomUI('connected');
+
+                    if (!listenerAttached) {
+                        listenerAttached = true;
+                        calleeCandidatesUnsubscribe = onSnapshot(collection(roomRef, 'calleeCandidates'), snapshot => {
+                            snapshot.docChanges().forEach(async change => {
+                                if (change.type === 'added') {
+                                    await peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+                                }
+                            });
+                        });
+                    }
                 }
             }
         },
@@ -529,14 +542,6 @@ const handleCreateRoom = async () => {
             }
         }
     );
-
-    onSnapshot(collection(roomRef, 'calleeCandidates'), snapshot => {
-        snapshot.docChanges().forEach(async change => {
-            if (change.type === 'added') {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data()));
-            }
-        });
-    });
 };
 
 const handleJoinRoom = async (e) => {
@@ -713,6 +718,7 @@ const hangUp = async () => {
     
     if (roomUnsubscribe) roomUnsubscribe();
     if (messagesUnsubscribe) messagesUnsubscribe();
+    if (calleeCandidatesUnsubscribe) calleeCandidatesUnsubscribe();
 
     if (activeRoomId && currentUser) {
         try {
@@ -739,6 +745,7 @@ const hangUp = async () => {
     isSharing = false;
     roomUnsubscribe = () => {};
     messagesUnsubscribe = () => {};
+    calleeCandidatesUnsubscribe = () => {};
     
     document.getElementById('remote-video').srcObject = null;
     document.getElementById('local-video').srcObject = null;
