@@ -72,6 +72,8 @@ const provider = new GoogleAuthProvider();
 const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%2372767d'/%3E%3C/svg%3E";
 const HANGUP_SVG = `<svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.218,2.282a1.042,1.042,0,0,0-1.474,0l-1.7,1.7-2.31-2.31a3.03,3.03,0,0,0-4.286,0L2.282,6.839a3.03,3.03,0,0,0,0,4.286l3.3,3.3-2.24,2.24a1.042,1.042,0,0,0,0,1.474l3.78,3.78a1.042,1.042,0,0,0,1.474,0l2.24-2.24,3.3,3.3a3.03,3.03,0,0,0,4.286,0l4.834-4.834a3.03,3.03,0,0,0,0-4.286L17.218,2.282Z"></path></svg>`;
 const CHAT_SVG = `<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>`;
+const SHARE_SCREEN_SVG = `<svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>`;
+const STOP_SHARE_SVG = `<svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1zm4 0a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>`;
 
 // =================================================================================
 // App State
@@ -85,6 +87,7 @@ let peerConnection;
 let localStream;
 let remoteStream = new MediaStream();
 let activeRoomId = null;
+let isSharing = false;
 const iceServers = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -337,29 +340,29 @@ const showRoomUI = (state) => {
     roomCodeText.textContent = `CODE: ${activeRoomId}`;
 
     const controlsHTML = `
+        <button id="share-screen-button" class="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center hover:bg-blue-600" aria-label="Toggle Screen Share">
+            ${isSharing ? STOP_SHARE_SVG : SHARE_SCREEN_SVG}
+        </button>
         <button id="chat-toggle-button" class="w-12 h-12 bg-gray-600/50 rounded-full flex items-center justify-center hover:bg-gray-500/50" aria-label="Toggle Chat">${CHAT_SVG}</button>
-        <button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Stop Sharing">${HANGUP_SVG}</button>
+        <button id="hang-up-button" class="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600" aria-label="Leave Room">${HANGUP_SVG}</button>
     `;
+    controls.innerHTML = controlsHTML;
+    document.getElementById('hang-up-button').onclick = hangUp;
+    document.getElementById('chat-toggle-button').onclick = toggleChatPanel;
+    document.getElementById('share-screen-button').onclick = toggleScreenShare;
+    
+    localVideoContainer.style.display = isSharing ? 'block' : 'none';
 
     if (state === 'waiting') {
         status.innerHTML = `
             <h3 class="text-2xl font-semibold">Waiting for someone to join...</h3>
             <p class="text-gray-300 mt-2">Share the room code with a friend.</p>
         `;
-        controls.innerHTML = controlsHTML;
-        document.getElementById('hang-up-button').onclick = hangUp;
-        document.getElementById('chat-toggle-button').onclick = toggleChatPanel;
-        
         status.style.display = 'flex';
         controls.style.display = 'flex';
-        localVideoContainer.style.display = 'block';
     } else if (state === 'connected') {
         status.style.display = 'none';
-        localVideoContainer.style.display = 'block';
         controls.style.display = 'flex';
-        controls.innerHTML = controlsHTML;
-        document.getElementById('hang-up-button').onclick = hangUp;
-        document.getElementById('chat-toggle-button').onclick = toggleChatPanel;
     }
 };
 
@@ -367,26 +370,82 @@ const showRoomUI = (state) => {
 // =================================================================================
 // WebRTC & Chat Functions
 // =================================================================================
+const toggleScreenShare = async () => {
+    if (isSharing) {
+        await stopScreenShare();
+    } else {
+        await startScreenShare();
+    }
+};
+
+const startScreenShare = async () => {
+    try {
+        localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    } catch (error) {
+        console.error("Could not get display media.", error);
+        alert("Screen sharing permission is required.");
+        return;
+    }
+
+    isSharing = true;
+    document.getElementById('local-video').srcObject = localStream;
+    document.getElementById('local-video-container').style.display = 'block';
+
+    const shareButton = document.getElementById('share-screen-button');
+    if (shareButton) shareButton.innerHTML = STOP_SHARE_SVG;
+
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (videoTrack) {
+        videoTrack.onended = () => {
+            console.log("Screen sharing ended by user via browser UI.");
+            stopScreenShare();
+        };
+    }
+
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+    // Renegotiate by creating and sending a new offer
+    const roomRef = doc(db, 'rooms', activeRoomId);
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    await updateDoc(roomRef, { 
+        offer: { type: offer.type, sdp: offer.sdp } 
+    });
+};
+
+const stopScreenShare = async () => {
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+    }
+    localStream = null;
+    isSharing = false;
+
+    document.getElementById('local-video').srcObject = null;
+    document.getElementById('local-video-container').style.display = 'none';
+
+    const shareButton = document.getElementById('share-screen-button');
+    if (shareButton) shareButton.innerHTML = SHARE_SCREEN_SVG;
+
+    if (peerConnection) {
+        for (const sender of peerConnection.getSenders()) {
+            if (sender.track) {
+                peerConnection.removeTrack(sender);
+            }
+        }
+        
+        // Renegotiate to signal track removal
+        const roomRef = doc(db, 'rooms', activeRoomId);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        await updateDoc(roomRef, { 
+            offer: { type: offer.type, sdp: offer.sdp } 
+        });
+    }
+};
+
 
 const handleCreateRoom = async () => {
     if (activeRoomId) return;
-
-    try {
-        localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-        document.getElementById('local-video').srcObject = localStream;
-        
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) {
-            videoTrack.onended = () => {
-                console.log("Screen sharing ended by user via browser UI.");
-                hangUp();
-            };
-        }
-    } catch (error) {
-        console.error("Could not get display media.", error);
-        alert("Screen sharing permission is required to create a room.");
-        return;
-    }
 
     const roomCollection = collection(db, 'rooms');
     const roomRef = doc(roomCollection);
@@ -395,8 +454,6 @@ const handleCreateRoom = async () => {
     peerConnection = new RTCPeerConnection(iceServers);
     remoteStream.getTracks().forEach(track => remoteStream.removeTrack(track));
     document.getElementById('remote-video').srcObject = remoteStream;
-
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
     const callerCandidatesCollection = collection(roomRef, 'callerCandidates');
     peerConnection.onicecandidate = event => {
@@ -425,6 +482,7 @@ const handleCreateRoom = async () => {
     await setDoc(roomRef, roomWithOffer);
     
     listenForMessages(activeRoomId);
+    isSharing = false;
     showRoomUI('waiting');
 
     roomUnsubscribe = onSnapshot(roomRef, async snapshot => {
@@ -435,10 +493,14 @@ const handleCreateRoom = async () => {
         }
 
         const data = snapshot.data();
-        if (data.answer && !peerConnection.currentRemoteDescription) {
-            const answerDescription = new RTCSessionDescription(data.answer);
-            await peerConnection.setRemoteDescription(answerDescription);
-            showRoomUI('connected');
+        if (data.answer) {
+            const isNewAnswer = !peerConnection.currentRemoteDescription || 
+                                peerConnection.currentRemoteDescription.sdp !== data.answer.sdp;
+            if (isNewAnswer) {
+                const answerDescription = new RTCSessionDescription(data.answer);
+                await peerConnection.setRemoteDescription(answerDescription);
+                showRoomUI('connected');
+            }
         }
     });
 
@@ -477,29 +539,9 @@ const handleJoinRoom = async (e) => {
     joinError.textContent = '';
     activeRoomId = roomId;
 
-    try {
-        localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-        document.getElementById('local-video').srcObject = localStream;
-        
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) {
-            videoTrack.onended = () => {
-                console.log("Screen sharing ended by user via browser UI.");
-                hangUp();
-            };
-        }
-    } catch (error) {
-        console.error("Could not get display media.", error);
-        alert("Screen sharing permission is required to join a room.");
-        activeRoomId = null;
-        return;
-    }
-
     peerConnection = new RTCPeerConnection(iceServers);
     remoteStream.getTracks().forEach(track => remoteStream.removeTrack(track));
     document.getElementById('remote-video').srcObject = remoteStream;
-
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
     const calleeCandidatesCollection = collection(roomRef, 'calleeCandidates');
     peerConnection.onicecandidate = event => {
@@ -530,12 +572,22 @@ const handleJoinRoom = async (e) => {
     await updateDoc(roomRef, roomWithAnswer);
     
     listenForMessages(activeRoomId);
+    isSharing = false;
     showRoomUI('connected');
 
-    roomUnsubscribe = onSnapshot(roomRef, snapshot => {
+    roomUnsubscribe = onSnapshot(roomRef, async snapshot => {
         if (!snapshot.exists()) {
             console.log("Room deleted, hanging up.");
             hangUp();
+            return;
+        }
+        const data = snapshot.data();
+        // Handle renegotiation offer from creator
+        if (data.offer && peerConnection.remoteDescription && data.offer.sdp !== peerConnection.remoteDescription.sdp) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+            const newAnswer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(newAnswer);
+            await updateDoc(roomRef, { answer: { type: newAnswer.type, sdp: newAnswer.sdp } });
         }
     });
 
@@ -631,7 +683,7 @@ const hangUp = async () => {
     if (roomUnsubscribe) roomUnsubscribe();
     if (messagesUnsubscribe) messagesUnsubscribe();
 
-    if (activeRoomId) {
+    if (activeRoomId && currentUser) {
         const roomRef = doc(db, 'rooms', activeRoomId);
         const roomDoc = await getDoc(roomRef);
         if (roomDoc.exists() && roomDoc.data().creatorId === currentUser.uid) {
@@ -652,6 +704,7 @@ const hangUp = async () => {
     localStream = null;
     remoteStream = new MediaStream();
     activeRoomId = null;
+    isSharing = false;
     roomUnsubscribe = () => {};
     messagesUnsubscribe = () => {};
     
